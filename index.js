@@ -64,6 +64,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["prompt"],
         },
       },
+      {
+        name: "generate_image",
+        description:
+          "Generate images using Grok's image generation model. Creates high-quality images based on text descriptions.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            prompt: {
+              type: "string",
+              description: "Detailed description of the image to generate",
+            },
+            size: {
+              type: "string",
+              description:
+                "Image size: '1024x1024' (default), '1792x1024', or '1024x1792'",
+              enum: ["1024x1024", "1792x1024", "1024x1792"],
+              default: "1024x1024",
+            },
+            quality: {
+              type: "string",
+              description:
+                "Image quality: 'standard' (default) or 'hd'",
+              enum: ["standard", "hd"],
+              default: "standard",
+            },
+            n: {
+              type: "number",
+              description: "Number of images to generate (1-4, default: 1)",
+              minimum: 1,
+              maximum: 4,
+              default: 1,
+            },
+          },
+          required: ["prompt"],
+        },
+      },
     ],
   };
 });
@@ -115,6 +151,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: `[Grok ${model === "grok-3" ? "3" : "4"}]\n\n${response}`,
           },
         ],
+      };
+    }
+
+    if (name === "generate_image") {
+      const {
+        prompt,
+        size = "1024x1024",
+        quality = "standard",
+        n = 1,
+      } = args;
+
+      // Grok 이미지 생성 API 호출
+      const imageResponse = await grok.images.generate({
+        model: "grok-2-image-1212",
+        prompt: prompt,
+        size: size,
+        quality: quality,
+        n: n,
+      });
+
+      // 생성된 이미지 URL들을 수집
+      const imageUrls = imageResponse.data.map((img) => img.url);
+
+      // 결과 구성
+      const content = [
+        {
+          type: "text",
+          text: `[Grok Image Generation]\n\nGenerated ${n} image${n > 1 ? "s" : ""} using grok-2-image-1212\nSize: ${size}\nQuality: ${quality}\n\nPrompt: ${prompt}\n\nImage URLs:`,
+        },
+      ];
+
+      // 각 이미지 URL을 텍스트로 추가
+      imageUrls.forEach((url, index) => {
+        content.push({
+          type: "text",
+          text: `\n${index + 1}. ${url}`,
+        });
+      });
+
+      return {
+        content: content,
       };
     }
 
