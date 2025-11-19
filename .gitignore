@@ -4,3 +4,5 @@ node_modules/
 *.log
 
 mcp-server.log
+
+generated_images

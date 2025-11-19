@@ -7,6 +7,13 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import OpenAI from "openai";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// __dirname 설정 (ES 모듈용)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Grok API 초기화
 const apiKey = process.env.GROK_API_KEY;
@@ -19,6 +26,32 @@ const grok = new OpenAI({
   apiKey: apiKey,
   baseURL: "https://api.x.ai/v1",
 });
+
+// 이미지 다운로드 및 저장 함수
+async function downloadAndSaveImage(imageUrl, filename) {
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download image: ${response.statusText}`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    const outputDir = path.join(__dirname, "generated_images");
+
+    // 디렉토리가 없으면 생성 (이미 있다고 했지만 안전장치)
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const filePath = path.join(outputDir, filename);
+    fs.writeFileSync(filePath, Buffer.from(buffer));
+
+    return filePath;
+  } catch (error) {
+    console.error(`Error saving image: ${error.message}`);
+    throw error;
+  }
+}
 
 // MCP 서버 생성
 const server = new Server(
@@ -156,20 +189,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // 생성된 이미지 URL들을 수집
       const imageUrls = imageResponse.data.map((img) => img.url);
 
+      // 이미지 다운로드 및 저장
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const savedFiles = [];
+
+      for (let i = 0; i < imageUrls.length; i++) {
+        const filename = `grok_${timestamp}_${i + 1}.jpeg`;
+        try {
+          const filePath = await downloadAndSaveImage(imageUrls[i], filename);
+          savedFiles.push({ url: imageUrls[i], path: filePath });
+        } catch (error) {
+          console.error(`Failed to save image ${i + 1}: ${error.message}`);
+          savedFiles.push({ url: imageUrls[i], path: null, error: error.message });
+        }
+      }
+
       // 결과 구성
       const content = [
         {
           type: "text",
-          text: `[Grok Image Generation]\n\nGenerated ${n} image${n > 1 ? "s" : ""} using grok-2-image-1212\n\nPrompt: ${prompt}\n\nImage URLs:`,
+          text: `[Grok Image Generation]\n\nGenerated ${n} image${n > 1 ? "s" : ""} using grok-2-image-1212\n\nPrompt: ${prompt}\n\nSaved Images:`,
         },
       ];
 
-      // 각 이미지 URL을 텍스트로 추가
-      imageUrls.forEach((url, index) => {
-        content.push({
-          type: "text",
-          text: `\n${index + 1}. ${url}`,
-        });
+      // 각 이미지 정보를 텍스트로 추가
+      savedFiles.forEach((file, index) => {
+        if (file.path) {
+          content.push({
+            type: "text",
+            text: `\n${index + 1}. Saved to: ${file.path}\n   URL: ${file.url}`,
+          });
+        } else {
+          content.push({
+            type: "text",
+            text: `\n${index + 1}. Failed to save (${file.error})\n   URL: ${file.url}`,
+          });
+        }
       });
 
       return {
